@@ -1,0 +1,122 @@
+---
+subtitle: "APSTA-GE 2123 Project"
+title: "How a Student's Number of Days of Absence is Indicated by the Score in a Standardized Mathematics Test"
+author: "Zixuan Zhou"
+date: "5/15/2020"
+output: pdf_document
+---
+# I. Introduction
+In this report, the topic discussed is how a student's number of days of absence is indicated by the score in a standardized mathematics test, and the data set used is form UCLA Institution for Digital Research & Education Statistical Consulting. The data is firstly accessed by delivering both numerical and graphical summaries. Two models- Negative Binomial Model and Poisson Model are then implemented to fit the data, and this is followed by model comparison. Before the final wrap-up of the report, the posterior predictive distribution is shown. 
+
+# II. Description of the Data
+The data set contains attendance data on 314 high school juniors from two urban high schools in the file nb_data. The response variable of interest is days absent, daysabs. The variable math gives the standardized math score for each student. The variable prog is a three-level nominal variable indicating the type of instructional program in which the student is enrolled.
+
+```{r setup, include=FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(foreign)
+require(ggplot2)
+require(MASS)
+library(brms)
+```
+
+## Numerical Summary
+```{r}
+dat <- read.dta("https://stats.idre.ucla.edu/stat/stata/dae/nb_data.dta")
+dat <- within(dat, {
+    prog <- factor(prog, levels = 1:3, labels = c("General", "Academic", "Vocational"))
+    id <- factor(id)
+})
+
+summary(dat)
+```
+
+Each variable has 314 valid observations and their distributions seem quite reasonable. The unconditional mean of our outcome variable is much lower than its variance. This might imply that Poisson Model is not likely to be a suitable model to fit the data.
+
+```{r}
+with(dat, tapply(daysabs, prog, function(x) {
+    sprintf("M (SD) = %1.2f (%1.2f)", mean(x), sd(x))
+}))
+```
+
+The table above demonstrates the average numbers of days absent by program type and seems to suggest that program type is a good candidate for predicting the number of days absent, our outcome variable, because the mean value of the outcome appears to vary by prog. The variances within each level of prog are higher than the means within each level. These are the conditional means and variances. These differences suggest that over-dispersion is present and that a Negative Binomial model would be appropriate.
+
+## Graphical Summary
+```{r}
+ggplot(dat, aes(daysabs, fill = prog)) + geom_histogram(binwidth = 1) + facet_grid(prog ~ 
+    ., margins = TRUE, scales = "free")
+```
+
+
+# III. Fit the Models
+In this report, the Negative Binomial Model and the Poisson Model are implemented due to following reasons.
+
+Poisson regression is often used for modeling count data. Poisson regression has a number of extensions useful for count models.
+
+Negative binomial regression can be used for over-dispersed count data, that is when the conditional variance exceeds the conditional mean. It can be considered as a generalization of Poisson regression since it has the same mean structure as Poisson regression and it has an extra parameter to model the over-dispersion. If the conditional distribution of the outcome variable is over-dispersed, the confidence intervals for the Negative binomial regression are likely to be narrower as compared to those from a Poisson regression model.
+
+## Negative Binomial Model
+```{r}
+get_prior(formula = daysabs ~ math + prog, data = dat, family = negbinomial)
+```
+
+```{r}
+priors <- prior(normal(0, 1), class = "b", coef = "math") + 
+  prior(normal(0, 0.1), class = "b", coef = "progAcademic") + 
+  prior(normal(0, 0.1), class = "b", coef = "progVocational") +
+  prior(normal(0, 1.5), class = "Intercept") +
+  prior(exponential(1), class = "shape")
+```
+
+```{r, nb, cache = TRUE, results = "hide", message = FALSE}
+nb <- brm(daysabs ~ math + prog, data = dat, family = negbinomial, 
+          prior = priors, verbose = TRUE)
+```
+
+## Poisson Model
+```{r, po, cache = TRUE, results = "hide", message = FALSE}
+po <- update(nb, family = poisson)
+```
+
+# IV. Model Comparison
+As mentioned before, the Poisson model is a special case of the negative binomial model as the overdispersion (shape) parameter goes to infinity. Clearly, its posterior distribution is small, indicating considerable overdispersion relative to a Poisson model.
+
+```{r}
+nb
+po
+```
+
+The Pareto $k$ estimates for the negative binomial model are all fine.
+```{r}
+loo(nb)
+```
+
+The PSIS diagnostic plot of the Negative Binomial Model is fine as well as shown below.
+
+```{r}
+plot(loo(nb), label_points = TRUE)
+```
+
+Whereas that is not true for the Poisson model, indicating that its posterior distribution is sensitive to particular observations(the one above the line in the graph below).
+```{r}
+plot(loo(po), label_points = TRUE)
+```
+
+```{r}
+pp_check(nb, type = "loo_intervals") + ggplot2::scale_y_continuous()
+```
+```{r}
+pp_check(po, type = "loo_intervals") + ggplot2::scale_y_continuous()
+```
+
+It can be seen from two graphs above, most of estimations of y lie in the confidence intervals in the Negative Binomial Model, however, the Poisson Model is way overconfident in its predictions.
+
+# V. Posterior Prediction
+To describe the posterior beliefs about the students' average days absent, the graph below is derived.
+
+```{r}
+PPD <- posterior_predict(nb, draws = 100, fun = exp)
+hist(rowMeans(PPD), prob = TRUE, main = "", las = 1, xlab = "Average Days Absent")
+```
+
+# VI. Conclusion
+As discussed in IV section Model Comparison, the Negative Binomial Model is preferred as a model to be used to predict how a student's number of days of absence is indicated by the score in a standardized mathematics test. For further study, I am interested in implementing zero-inflated regression model and OLS regression for this data set. 
